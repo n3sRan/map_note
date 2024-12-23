@@ -2,7 +2,7 @@
 
 不相交集, 并查集
 
-*其实61B在讲渐进分析时讲的很明白了, 只是我没怎么做笔记*
+*其实61B在讲[渐进分析](<../UCB_CS61B/cs61b_lec_note.md####Analysis of Algorithm Performance>)时讲的很明白了, 只是我没怎么做笔记*
 
 ## Equivalence Class
 
