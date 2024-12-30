@@ -122,31 +122,44 @@ public void kruskal() {
 暴力解法: O($N^2$)
 
 ```java
-private int[] dis = new int[MAXN];
-private boolean[] vis = new boolean[MAXN];
+private static final float MAXNUM = Float.MAX_VALUE;
+private float[][] Edge; // 邻接矩阵
+private float[] dist; // 存储从起点到每个节点的最短距离
+private int[] s; // 存储节点是否已被访问
+private int[] path; // 存储最短路径
 
-public void dijkstra(int n, int s) {
-    Arrays.fill(dis, Integer.MAX_VALUE);
-    dis[s] = 0;
-    for (int i = 1; i <= n; i++) {
-        int u = -1;
-        int mind = Integer.MAX_VALUE;
-        for (int j = 1; j <= n; j++) {
-            if (!vis[j] && dis[j] < mind) {
-                u = j;
-                mind = dis[j];
-            }
-        }
-        if (u == -1) break; // 如果没有找到可以访问的节点
-        vis[u] = true;
-        for (Edge ed : e[u]) {
-            int v = ed.v;
-            int w = ed.w;
-            if (dis[v] > dis[u] + w) {
-                dis[v] = dis[u] + w;
-            }
-        }
-    }
+public void shortestPath(int n, int v) {
+     for (int i = 0; i < n; i++) {
+         dist[i] = Edge[v][i]; // 更新距离
+         s[i] = 0; // 初始化访问状态
+         if (i != v && dist[i] < MAXNUM) {
+             path[i] = v; // 可达，记录路径
+         } else {
+             path[i] = -1; // 不可达，记录 -1
+         }
+     }
+
+     s[v] = 1; // 访问当前节点
+     dist[v] = 0; // 当前节点到自己的距离为 0
+
+     for (int i = 0; i < n - 1; i++) {
+         float min = MAXNUM;
+         int u = v;
+         for (int j = 0; j < n; j++) {
+             if (s[j] == 0 && dist[j] < min) {
+                 u = j; // 找到未访问中距离最小的节点
+                 min = dist[j];
+             }
+         }
+         s[u] = 1; // 标记节点为已访问
+
+         for (int w = 0; w < n; w++) {
+             if (s[w] == 0 && Edge[u][w] < MAXNUM && dist[u] + Edge[u][w] < dist[w]) {
+                 dist[w] = dist[u] + Edge[u][w]; // 更新距离
+                 path[w] = u; // 更新路径
+             }
+         }
+     }
 }
 ```
 
@@ -211,8 +224,10 @@ public void BellmanFord(int v) {
     }
 
     for (int k = 2; k < n; k++) {
+	    // 每一轮都尝试更新到达u的最短路径
         for (int u = 0; u < n; u++) {
             if (u != v) {
+	            // 遍历所有指向u的边
                 for (int i = 0; i < n; i++) {
                     // 一直算到n-1步
                     if (Edge[i][u] != 0 && Edge[i][u] < MAXNUM && dist[u] > dist[i] + Edge[i][u]) {

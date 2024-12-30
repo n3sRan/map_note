@@ -22,7 +22,7 @@
 
 #### 指数多项式
 
-## Sovle Collision
+## Solve Collision
 
 冲突解决
 
@@ -32,7 +32,7 @@
 
 ### Quadratic probing 二次探测法
 
-规则如上, 但放的下标为$d+1, d+2^2, d+3^2 ...$, d位由哈希函数算出的下标
+规则如上, 但放的下标为$d+1, d+2^2, d+3^2 ...$, 。$d$为由哈希函数算出的下标
 
 ### Double Hashing 双散列哈希
 
