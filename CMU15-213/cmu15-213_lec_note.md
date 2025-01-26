@@ -303,9 +303,9 @@ int (\*A4[3]) A4是3个元素的数组 这些元素是指向整数的指针 `siz
 
 Accesses looks similar in C (pgh\[index][digit], univ\[index][digit]), but address computations very different 底层数据类型不同, 引用也不同
 
-Mem[pgh + 20\*index + 4\*digit]
+Mem\[pgh + 20\*index + 4\*digit\]
 
-Mem[Mem[univ + 8\*index] + 4\  *digit]
+Mem\[Mem\[univ + 8\*index\] + 4\  \*digit\]
 
 ### Structures
 
@@ -410,7 +410,7 @@ There's more to performance than asymptotic complexity.
 
 The Memory Hierarchy 存储器层级结构
 
-详细版本: [存储器分层体系结构](../NJU24F_COA/存储器分层体系结构.md)
+详细版本: [存储器分层体系结构](../NJU24F_COA/3_存储器分层体系结构.md)
 
 ### Storage technologies and trends
 
