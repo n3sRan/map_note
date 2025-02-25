@@ -1,6 +1,6 @@
 # Lecture Note
 
-> Stanford CS106L FA19 & WI20
+> Stanford FA19 & WI20 CS106L
 
 ## 1 Intro
 

@@ -1,5 +1,7 @@
 # Lecture Note
 
+> NJU Spring 25 操作系统原理 蒋炎岩
+
 ## 1 操作系统概述
 
 ### Why-为什么学操作系统?
