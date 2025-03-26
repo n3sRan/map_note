@@ -677,3 +677,130 @@ ELF 并不是一个人类友好的**状态机数据结构描述**, 它为了性�
 加载器: 内核实现的一部分, `execve()`, 由内核来解析 path, 完成加载
 
 `#!`: UNXI 妙用, 优先使用 `#!` 指定的解释器
+
+## 11 动态链接与加载
+
+> 找到正确的思路, 我们就能在复杂的机制中找到主干: 在动态链接的例子里, 我们试着自己实现动态链接和加载. 在这个过程中, 我们"发明"了 ELF 中的重要概念, 例如 Global Offset Table, Procedure Linkage Table 等.
+
+*参考 [CMU15-213: Linking](<../CMU15-213/cmu15-213_lec_note## 13 Linking>)*
+
+### 动态链接: 机制
+
+从**需求**出发: 实现运行库和应用代码分离
+
+- 应用之间库的共享
+  - 每个程序都需要 glibc, 但系统里只需要**一个副本**就可以了
+  - 运行库和应用代码还可以分别**独立**升级
+- 大型项目的分解
+  - 改一行代码不用重新链接 2GB 的文件
+
+### mmap 和虚拟内存
+
+实验: `libbloat.so`
+
+- 创建 1,000 个进程**动态链接** `libbloat.so` (一个 100M 的库) 的进程, 实际只占用了几百兆的内存
+
+共享库的加载
+
+- 对比实验: 从 gdb 的 `starti` 开始, 分别调试静态编译和动态链接的 `a.out`
+- 对于动态链接
+  - `a.out`的第一条指令不在程序里, 而在 `ld.so` 中, 这由 ELF 文件的 INTERP 段约定
+  - `a.out`执行时, libc 还没有加载, 它是后来由 `mmap` 系统调用加载的
+- 只读方式 mmap 同一个文件, **物理内存**中只有一个副本
+
+虚拟内存管理
+
+- 地址空间表面: 若干连续的内存段
+  - 通过 mmap/munmap/mprotect 维护
+- 实际: 分页机制维护的"幻象"
+
+Virtual Memory
+
+- 操作系统维护 **memory mappings** 的数据结构
+- 延迟加载
+- 写时复制 (Copy-on-Write)
+  - `fork()`时, 父子进程先只读共享全部地址空间 (部分打上"可写"标记), Page fault 时, 写者复制一份
+
+
+Memory Deduplication; Compression & Swapping
+
+- 扫描内存
+  - 有重复的 read-only pages, 合并
+  - 发现 cold pages, 可以压缩/swap 到硬盘 (硬件提供了 Access/Dirty bit)
+- 还能干嘛: *问 AI*
+
+### 实现动态链接
+
+*就像实现 FLE 一样, 但这里课上讲得神速, 没听懂*
+
+应用程序的拆解
+
+- 方案1: `libc.o`, 在加载时完成重定位
+  - 加载 = 静态链接, 省了磁盘但没省内存
+  - 缺点: 浪费时间 (链接需要解析很多不会用到的符号)
+- 方案 2: `libc.so`, 让编译器生成**位置无关代码**
+  - 加载 = mmap, 但函数调用时需要**额外一次**查表
+  - 优点: 映射**同一个** `libc.so`, 内存中只需要一个副本
+
+动态加载 (以 `dlbox` 为例)
+
+- 编译时: 动态链接库调用 = 查表
+
+  - `call  *TABLE[printf@symtab]`
+
+- 链接时: 收集所有符号, "生成" 符号信息和相关代码
+
+   ```c
+    #define foo@symtab     1
+    #define printf@symtab  2
+    ...
+    
+    void *TABLE[N_SYMBOLS];
+    
+    void load(struct loader *ld) {
+        TABLE[foo@symtab] = ld->resolve("foo");
+        TABLE[foo@printf] = ld->resolve("printf");
+        ...
+    }
+   ```
+
+- GOT (Global Offset Table)
+
+  - 对于每个需要动态解析的符号, GOT 中都有一个位置
+  - (GOT 中 `printf()` 的地址才是真正的地址)
+
+- PLT (Procedure Linkage Table)
+
+  - 先编译, 后链接产生的问题: 对于某个函数的跳转 (**编译器**无法区分是自己编写的`foo()`还是动态链接库的`printf()`) 到底要不要查表
+
+    - 如果选择全部查表跳转: 则性能会有极大损失
+    - `ff 25 00 00 00 00  call *FOO_OFFSET(%rip)`
+
+  - 为了性能, 不得不选择全部"直接"跳转
+
+    - `e8 00 00 00 00  call <reloc>`
+    - 如果函数来源**动态加载**, 则需借助 **PLT**
+    - `e8 f0 fe ff ff  call 1060 <puts@plt>`
+
+  - 怎么理解这个过程? *问 AI*
+
+    ```markdown
+    程序启动 → 内核加载动态链接器（ld-linux.so） → 加载依赖库（如libc.so）
+           ↓
+    首次调用printf@plt → GOT指向解析函数 → 动态链接器查找printf地址 → 更新GOT → 跳转执行
+           ↓
+    后续调用printf@plt → 直接跳转GOT中已存储的地址
+    ```
+
+- PLT 没能解决数据的问题
+
+  - 对于 `extern int x`, 不能"间接跳转"
+  - 不优雅的解决方法: `-fPIC` 默认会为所有 extern 数据增加一层间接访问
+
+
+LD_PRELOAD
+
+- 程序启动时可以优先动态链接指定的库 (符号解析和重定位遵循先到先得原则)
+- `LD_PRELOAD=./mylib.so ./a.out`
+- 例子: 给 `malloc()` 加个封装, 参照 [CMU15-213 Library Interpositioning](<../CMU15-213/cmu15-213_lec_note### Library Interpositioning>)
+
