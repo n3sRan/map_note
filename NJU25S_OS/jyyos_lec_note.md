@@ -804,3 +804,100 @@ LD_PRELOAD
 - `LD_PRELOAD=./mylib.so ./a.out`
 - 例子: 给 `malloc()` 加个封装, 参照 [CMU15-213 Library Interpositioning](<../CMU15-213/cmu15-213_lec_note### Library Interpositioning>)
 
+## 12 构建应用生态
+
+### 从 UNIX 到 Linux
+
+UNIX 最早版本: 甚至没有 `fork()`
+
+- 从零开始很重要
+
+历史
+
+1. Minix1 (1987)
+2. Minix2 (1997)
+3. Minix3 (2006)
+
+Linux (25 Aug 1991)
+
+- 合适的人 + 合适的时间
+
+Linux 的两面
+
+- **Kernel**
+  - 加载第一个进程
+    - 相当于在操作系统中放置一个位于**初始状态的状态机**
+    - Initramfs 模式
+  - 包含一些进程可操纵的操作系统对象
+  - *就这么多* (启动后 Kernel 就是一个 trap handler)
+- Linux Kernel **系统调用**上的发行版和应用生态
+  - 系统工具 coreutils, binutils, systemd
+  - 桌面系统 Gnome, xfce, Android
+  - 应用程序 file manager, vscode
+
+### Linux 和应用程序的接口
+
+**操作系统中的对象**应该也有一个初始状态
+
+intiramfs
+
+- 自己实现一个
+  - 可以只有一个 `init` 文件
+  - 系统启动后, Linux 还会增加 `/dev` 和 `/dev/console`
+- 实际的
+  - 基本命令行工具
+  - 基础设备驱动程序
+  - 文件系统工具
+
+initramfs 并不是我们看到的 Linux 世界
+
+- 启动的初级阶段
+  - 加载剩余必要的驱动程序, 例如磁盘/网卡
+  - 挂载必要的文件系统
+    - Linux 内核有启动选项 (类似环境变量)
+      - /proc/cmdline (man 7 bootparam)
+    - 读取 root filesystem 的 /etc/fstab
+  - 将根文件系统和控制权移交给另一个程序, 例如 systemd
+- 启动的第二级阶段: `/sbin/init`
+  - 加载必要的驱动
+  - 释放 initramfs
+
+切换根文件系统
+
+```c
+int pivot_root(const char *new_root, const char *put_old);
+```
+
+**操作系统 = 对象的集合**
+
+- 初始状态
+  - initramfs 中的对象 + `/dev/console` + 加载的 init
+- 状态迁移
+  - 选择一个进程 (对象) 执行一条指令
+  - 系统调用
+    - 进程管理: fork, execve, exit, waitpid, getpid, ...
+    - 操作系统对象和访问: open, close, read, write, pipe, mount, mkfifo, mknod, stat, socket, ...
+    - 地址空间管理: mmap, sbrk (mmap 的前身)
+    - 以及一些其他的机制: pivot_root, chmod, chown, ...
+
+### 构建应用程序的世界
+
+操作系统仅有的机制: 初始状态 + 系统调用
+
+操作系统完全"感知"不到应用程序
+
+操作系统上的应用生态
+
+- 应用商店模式
+- 开源模式
+
+## 虚拟化: 总结
+
+至此, 我们终于完全展示了逐层抽象的计算机系统世界: 
+
+- 硬件向上提供了指令集体系结构
+- 基于指令集, 实现了操作系统 (对象, 系统调用 API 和 initramfs 定义的初始状态)
+- 操作系统上面支撑了系统工具 (coreutils, shell, apt, gcc, ...)
+- 系统工具上面才是各式各样的应用程序
+
+实际上, 我们看到的计算机系统中的一切都是由应用程序 “完成” 的, 操作系统只是提供系统调用这个非常原始的服务接口. 正是系统调用 (包括操作系统中的对象) 这个稳定的, 向后兼容的接口随着历史演化和积累, 形成了难以逾越的技术屏障, 在颠覆性的技术革新到来之前, 另起炉灶都是非常困难的.

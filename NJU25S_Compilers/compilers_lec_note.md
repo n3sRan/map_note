@@ -328,3 +328,5 @@ LL(1) 语法分析器
 栈 + 预测分析表
 
 ![](../0_Attachment/Pasted%20image%2020250325125545.png)
+
+## 7 语法分析-Allstar
