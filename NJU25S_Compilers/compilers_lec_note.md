@@ -329,4 +329,90 @@ LL(1) 语法分析器
 
 ![](../0_Attachment/Pasted%20image%2020250325125545.png)
 
-## 7 语法分析-Allstar
+## 7 语法分析-Adaptive LL(∗) 语法分析算法
+
+### 背景
+
+- LL(1) 语法分析算法的处理能力有限
+  - 左递归文法, 带左公因子的文法: `E -> E + E | E * E | ID`
+- ANTLR 4 采用的 Adaptive LL(∗) 语法分析算法功能强大
+  - 自动将类似 expr 的左递归规则重写成非左递归形式
+  - 提供优秀的错误报告功能和复杂的错误恢复机制
+  - 几乎能处理任何文法 (不能处理间接左递归)
+
+### 处理直接左递归与优先级
+
+例子: 匹配 `1 + 2 + 3`, `1 + 2 * 3`, `1 * 2 + 3`
+
+```
+stmt : expr ';' EOF;
+expr : expr '*' expr
+     | expr '+' expr
+     | INT
+     | ID
+     ;
+```
+
+根本问题:究竟是在 expr 的**当前调用**中匹配下一个运算符, 还是让 expr 的**调用者**匹配下一个运算符.
+
+改写: 
+
+```
+expr[int _p]
+	: (	  INT
+		| ID
+	  )
+	  (	  {4 >= $_p} ? '*' expr[5]
+	  	| {3 >= $_p} ? '+' expr[4]
+	  )*
+	;
+```
+
+![](../0_Attachment/Pasted%20image%2020250331152216.png)
+
+- 左结合: p + 1
+- 右结合: p 不变
+
+### 动态分析: Adaptive LL(∗)
+
+例子: `P = {S -> Ac | Ad, A -> aA | b}`, 匹配 `bc` 和 `bd`
+
+![](../0_Attachment/Pasted%20image%2020250331152658.png)
+
+- Launch subparsers at a decision point, one per alternative productions.
+- These subparsers run in pseudo-parallel to explore all possible paths.
+- Subparsers die off as their paths fail to match the remaining input.
+- Ambiguity: Multiple subparsers coalesce together or reach EOF.
+- Resolution: The first production associated with a surviving subparser.
+
+Move on terminals and Closure over ϵ and non-terminals.
+
+## 8 语义分析-符号表
+
+### 类型检查
+
+分类: Strong/Weak, Dynamic/Static
+
+在 Lab 中需要考虑
+
+### 符号检查
+
+符号: 变量名, 函数名, 类型名, 标签名…
+
+符号表是用于保存各种符号相关信息的**数据结构**
+
+作用域
+
+- 领域特定语言 (DSL) 通常只有单作用域 (全局作用域)
+- 通用程序设计语言 (GPL) 通常需要嵌套作用域
+
+通过 ANTLR 4 的 listener 构建一个符号表
+
+- 类设计:
+  ![](../0_Attachment/Pasted%20image%2020250331174859.png)
+- Listener:
+  ![](../0_Attachment/Pasted%20image%2020250331174904.png)
+
+struct/class 的类型作用域
+
+![](../0_Attachment/Pasted%20image%2020250331174956.png)
