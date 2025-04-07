@@ -416,3 +416,172 @@ Move on terminals and Closure over ϵ and non-terminals.
 struct/class 的类型作用域
 
 ![](../0_Attachment/Pasted%20image%2020250331174956.png)
+
+## 9 语义分析-属性文法
+
+*笔记思路不算特别清晰, 主打一个能看就行*
+
+### 属性文法
+
+进行类型检查, 符号检查, 用什么样的文法刻画语言的**语义**.
+
+**属性文法** (Attribute Grammar): 为上下文无关文法赋予语义
+
+**Offline** 方式计算属性值: 已有语法分析树
+
+- 按照从左到右的深度优先顺序遍历语法分析树
+- 关键: 在合适的时机执行合适的动作, 计算相应的属性值
+
+在语法**分析过程中**实现**属性文法**
+
+- 语义动作嵌入的位置决定了何时执行该动作
+- 基本思想: 一个动作在它左边的所有文法符号都处理过之后立刻执行
+
+语法制导定义 (Syntax-Directed Definition, SDD)
+
+- SDD 是一个上下文无关文法和**属性**及**规则**的结合
+- 每个文法符号都可以关联多个属性 (红框), 每个产生式都可以关联一组规则 (蓝框)
+- SDD 唯一确定了语法分析树上每个**非终结符**节点的属性值, 但没有规定以什么方式, 什么顺序计算这些属性值
+- ![](../0_Attachment/Pasted%20image%2020250406152049.png)
+
+注释 (annotated) 语法分析树: 显示了各个属性值的语法分析树
+
+- ![](../0_Attachment/Pasted%20image%2020250406152325.png)
+
+**综合属性** (Synthesized Attribute)
+
+- 节点 N 上的综合属性只能通过 N 的子节点或 N 本身的属性来定义
+- 示例如上图
+
+S 属性定义 (S-Attributed Definition)
+
+- 如果一个 SDD 的每个属性都是综合属性, 则它是 S 属性定义
+- 其依赖图描述了属性实例之间**自底向上**的信息流, 此类属性值的计算可以在自顶向下的 LL 语法分析过程中实现
+  - 在 LL 语法分析器中, 递归下降函数 A **返回**时, 计算相应节点 A 的综合属性值
+
+**继承属性** (Inherited Attribute)
+
+- 节点 N 上的继承属性只能通过N 的父节点, N 本身和 N 的兄弟节点上的属性来定义
+- 信息流向: 先从左向右, 从上到下传递信息
+- ![](../0_Attachment/Pasted%20image%2020250406153303.png)
+- ![](../0_Attachment/Pasted%20image%2020250406153306.png)
+
+L 属性定义 (L-Attributed Definition)
+
+- ![](../0_Attachment/Pasted%20image%2020250406153353.png)
+
+### 示例: 后缀表达式
+
+S属性定义
+
+![](../0_Attachment/Pasted%20image%2020250406153452.png)
+
+![](../0_Attachment/Pasted%20image%2020250406153511.png)
+
+### 示例: 数组类型文法
+
+![](../0_Attachment/Pasted%20image%2020250406153637.png)
+
+继承属性 C.b 将一个基本类型沿着树向下传播, 综合属性 C.t 收集最终得到的类型表达式
+
+- ![](../0_Attachment/Pasted%20image%2020250406153705.png)
+- ![](../0_Attachment/Pasted%20image%2020250406153811.png)
+
+语法制导的翻译方案 (Syntax-Directed Translation Scheme, SDT)
+
+- SDT 是在其产生式体中嵌入语义动作的上下文无关文法
+
+## 10 中间代码生成-LLVM IR简介
+
+### 概念
+
+LLVM IR: 带类型的、介于高级程序设计语言与汇编语言之间
+
+- 与高级语言的关系
+- ![](../0_Attachment/Pasted%20image%2020250407101604.png)
+
+生成 LLVM IR
+
+- `clang -S -emit-llvm -fno-discard-value-names factorial0.c -o f0-opt0.ll` (不开优化)
+- ![](../0_Attachment/Pasted%20image%2020250407101952.png)
+- `clang -S -emit-llvm factorial0.c -o f0-opt1.ll -O1 -g0` (O1优化, mem2reg)
+- ![](../0_Attachment/Pasted%20image%2020250407102223.png)
+
+三地址代码 Three Address Code (TAC)
+
+- 操作数最多3个
+
+静态单赋值 Static Single Assignment (SSA)
+
+- 可用无限多个**虚拟**寄存器
+- 每个寄存器只能被赋值**一次**, 即赋值语句中每个寄存器只能在等号左边出现一次
+
+(函数内) 控制流图 (Intra-procedure) Control Flow Graph (CFG)
+
+- 解释了 Basic Block, 每个**基本块**只有第一条指令是入口 (其他块跳转的目标), 只有最后一条语句是出口 (跳转至其他块)
+- ![](../0_Attachment/Pasted%20image%2020250407102418.png)
+- 为什么基本块的中间某条指令可以是 call 指令? 因为函数调用完成后会返回到该基本块 (把函数调用视为黑盒)
+- ![](../0_Attachment/Pasted%20image%2020250407102812.png)
+
+$\phi$ 指令
+
+- 根据控制流决定选择哪个值
+- ![](../0_Attachment/Pasted%20image%2020250407102921.png)
+- ![](../0_Attachment/Pasted%20image%2020250407103016.png)
+
+### 更多教程
+
+[LLVM IR Animation](https://blog.piovezan.ca/compilers/llvm_ir_animation/llvm_ir.html)
+
+[LLVM IR Tutorial @ Bilibili](https://www.bilibili.com/video/BV1mE421g7BA)
+
+[LLVM Language Reference Manual](https://llvm.org/docs/LangRef.html)
+
+[Program Visualization using LLVM @ Bilibili](https://www.bilibili.com/video/BV1jT421C7cH)
+
+### 用编程的方式生成 LLVM IR
+
+[LLVM Programmer's Manual](https://llvm.org/docs/ProgrammersManual.html)
+
+## 11 中间代码生成-表达式的翻译
+
+### 表达式的中间代码翻译
+
+例子: `a = b + -c`
+
+- 产生式与规则: ![](../0_Attachment/Pasted%20image%2020250407143541.png)
+- 综合属性 E.code: 中间代码
+- 综合属性 E.addr: 变量名 (包括临时变量)、常量
+- 这里的 `||` 指将子节点生成的中间代码拼接成**多行代码**, 利用综合属性从下到上的信息流
+- 结果 (简化版): ![](../0_Attachment/Pasted%20image%2020250407143547.png)
+- LLVM 结果: ![](../0_Attachment/Pasted%20image%2020250407143642.png)
+
+### 数组引用的中间代码翻译
+
+例子
+
+- 声明: `int a[2][3];`
+- 数组引用: `x = a[1][2]; a[1][2] = x;`
+
+关键: 需要计算 `a[1][2]` 相对于数组基地址 `a` 的偏移地址
+
+产生式与规则
+
+- ![](../0_Attachment/Pasted%20image%2020250407144259.png)
+- 综合属性 L.array(.base): 数组基地址 (即, 数组名)
+- 综合属性 L.addr: 偏移地址
+- 注释语法分析树: ![](../0_Attachment/Pasted%20image%2020250407144357.png)
+
+LLVM IR
+
+- 数组声明: `int a[2][3] = {0};` => `%2 = alloca [2 x [3 x i32]], align 16`
+- 数组引用: ![](../0_Attachment/Pasted%20image%2020250407144937.png)
+  - 蓝框: 访问的数组类型
+  - 红框: 数组的起始地址
+  - 紫框: 根据**蓝框自身类型**进行索引偏移
+  - 黄框: 根据**蓝框元素类型**进行索引偏移
+  - 区分紫框黄框: 传入一个`int32 *[2][3]` (无法区分只有一个二维数组, 还是多个二维数组的数组, 即三维数组)
+    - 紫: 单位 24
+    - 黄: 单位 12
+- 黄框索引可以有多个: ![](../0_Attachment/Pasted%20image%2020250407145647.png)
+
