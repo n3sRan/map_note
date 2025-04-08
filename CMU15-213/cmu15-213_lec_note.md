@@ -511,3 +511,107 @@ Shared Libraries
 - occur at Compile time, Link time, Load / Run time
 - Applications: security, debugging, monitoring and profiling (类似于61A里的函数wrapper/修饰器)
 
+## 14 Exceptional Control Flow: Exceptions and Processes
+
+## 15 Exceptional Control Flow: Signals and Nonlocal Jumps
+
+## 16 System-Level I/O
+
+### Unix I/O
+
+#### Overview
+
+- A Linux file is a sequence of m **bytes**: $B_0, B_1, ..., B_{m-1}$
+- All **I/O devices** are represented as files
+  - `/dev/sda2`
+  - `/dev/tty2`
+- Even the **kernel** is represented as a file
+  - `/boot/vmlinuz-3.13.0-55-generic`: kernel image
+  - `/proc`: kernel data structures
+- Allows kernel to export **simple interface** called Unix I/O
+  - `open()`, `close()`, `read()`, `write()`, `lseek()`
+
+#### File Types
+
+- Regular file: Contains arbitrary data
+- Directory: Index for a related group of files
+- Socket: For communicating with a process on another machine
+- Others: Named pipes, Symbolic links, Character and block devices
+
+#### Regular Files
+
+- **Applications** often distinguish between text files and binary files. (**Kernel** doesn’t know the difference.)
+  - Text files are regular files with only ASCII or Unicode characters
+  - Binary files are everything else
+- Text file is sequence of text lines. Text line is sequence of chars terminated by newline char.
+- End of line (EOL)
+  - Linux and Mac OS: `\n` (0xa)
+  - Windows and Internet protocols: `\r\n` (0xd 0xa)
+
+#### Directories
+
+- Consists of an array of links, each link maps a filename to a file.
+- Each directory contains at least two entries
+  - `.`, a link to itself
+  - `..`, 
+  - a link to the parent directory in the directory hierarchy
+- Directory Hierarchy: 1
+
+#### On Short Counts
+
+- can occur
+  - Encountering (end-­‐of-­‐file) EOF on reads
+  - Reading text lines from a terminal
+  - Reading and writing network sockets
+- never occur
+  - Reading from disk files (except for EOF)
+  - Writing to disk files
+- Best practice is to always allow for short counts.
+
+### RIO
+
+robust I/O package
+
+Buffered I/O
+
+- File has associated buffer to hold bytes that have been read from file but not yet read by user code *(不用应用程序每次需要一个或少量字符时都进行一次系统调用, 而是先调用一次, 把若干字符缓存, 后续应用程序只需从缓冲区提取)*
+- ![](../0_Attachment/Pasted%20image%2020250408161229.png)
+
+### Metadata, sharing, and redirection
+
+#### File Metadata
+
+- Per-­‐file metadata maintained by kernel, accessed by users with the `stat()` and `fstat()`
+- usage: `man stat`, `man 2 stat`
+- ![](../0_Attachment/Pasted%20image%2020250408155934.png)
+
+#### File Sharing
+
+- Before `fork()`: ![](../0_Attachment/Pasted%20image%2020250408160137.png)
+- After `fork()`: ![](../0_Attachment/Pasted%20image%2020250408160155.png)
+
+#### I/O Redirection
+
+- example: `ls > foo.txt`
+- ![](../0_Attachment/Pasted%20image%2020250408160327.png)
+
+### Standard I/O
+
+- Contained by the C standard library
+- Standard I/O models open files as **streams**, which are abstraction for a file descriptor and a buffer in memory.
+
+### Closing remarks
+
+![](../0_Attachment/Pasted%20image%2020250408160735.png)
+
+*some pros and cons of them...*
+
+#### Cons of Standard I/O
+
+- not async-‐signal-­safe, and not appropriate for signal handlers
+- not appropriate for input and output on network sockets
+
+#### Functions you should never use on binary files
+
+- Text-oriented I/O such as `fgets()`, `scanf()`, `rio_readlineb()`
+- String functions
