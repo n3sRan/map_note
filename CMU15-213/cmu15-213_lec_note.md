@@ -615,3 +615,117 @@ Buffered I/O
 
 - Text-oriented I/O such as `fgets()`, `scanf()`, `rio_readlineb()`
 - String functions
+
+## 17 Virtual Memory Concepts
+
+## 18 Virtual Memory Systems
+
+## 19 Dynamic Memory Allocation: Basic
+
+### Basic concepts
+
+Dynamic Memory Allocation
+
+- Programmers use dynamic memory allocators (such as `malloc()`) to acquire VM at run time.
+- Allocator maintains heap as collection of variable sized blocks, which are either **allocated** or **free**
+  - Explicit allocator: `malloc()` and `free()` in C
+  - Implicit allocator: garbage collection in Java
+
+Constraints
+
+- Applications
+  - Can issue arbitrary sequence of malloc and free requests
+  - free request must be to a malloc’d block
+- Allocators
+  - Can’t control number or size of allocated blocks
+  - Must respond immediately
+  - Must allocate blocks from free memory
+  - Must align blocks to satisfy all alignment requirements
+  - Can manipulate and modify only **free** memory
+  - Can’t move the allocated blocks once they are malloc’d
+
+Performance Goal
+
+- Throughput: Number of completed requests per unit time
+- Peak Memory Utilization: aggregate payload / heap size
+
+Fragmentation
+
+- internal fragmentation: ![](../0_Attachment/Pasted%20image%2020250421150510.png)
+- external fragmentation: ![](../0_Attachment/Pasted%20image%2020250421150525.png)
+
+How Much to Free
+
+- Use an extra word  (called header field or header) to keep the **length**  of the block
+
+Keeping Track of Free Blocks
+
+1. **Implicit list** using length—links all blocks: ![](../0_Attachment/Pasted%20image%2020250421151313.png)
+2. **Explicit list** among the free blocks using pointers: ![](../0_Attachment/Pasted%20image%2020250421151329.png)
+3. Segregated free list: Different free lists for different size classes
+4. Blocks sorted by size: use a balanced tree to track
+
+### Implicit free lists
+
+Finding a Free Block (Placement policy)
+
+- First-fit, next-fit, best-fit, ...
+
+Allocating in Free Block (Splitting policy)
+
+Freeing a Block (Coalescing policy: Immediate coalescing)
+
+- Boundary tags: Replicate size/allocated word at bottom of free blocks
+  - ![](../0_Attachment/Pasted%20image%2020250421152014.png)
+- Optimization: Boundary tag needed only for free blocks
+  - ![](../0_Attachment/Pasted%20image%2020250421152039.png)
+
+## 20 Dynamic Memory Allocation: Advanced
+
+### Explicit free lists
+
+Maintain list(s) of free blocks, not all blocks.![](../0_Attachment/Pasted%20image%2020250422160703.png)
+
+Freeing With Explicit Free Lists
+
+- Unordered
+  - LIFO (last-­‐in-­‐first-­‐out) policy: Insert freed block at the beginning of the free list
+  - FIFO (first-­‐in-­‐first-­‐out) policy: Insert freed block at the end of the free list
+  - Pro: simple and constant time
+  - Con: studies suggest fragmentation is worse than address ordered
+- Address-­‐ordered policy
+  - Insert freed blocks so that free list blocks are always in address order: `addr(prev)` < `addr(curr)` < `addr(next)`
+  - Con: requires search
+  - Pro: studies suggest fragmentation is lower than LIFO/FIFO
+
+### Segregated free lists
+
+Each size class of blocks has its own free list: ![](../0_Attachment/Pasted%20image%2020250422161057.png)
+
+Advantages
+
+- Higher throughput: log time for power-­‐of-­‐two size classes
+- Better memory utilization
+  - First-­fit search of segregated free list approximates a best-­‐fit search of entire heap.
+  - Extreme case: Giving each block its own size class is equivalent to best-­fit
+
+### Garbage collection
+
+Automatic reclamation of heap-­‐allocated storage, application never has to free.
+
+Common in many dynamic languages like Python, Java...
+
+Memory as a Graph
+
+- Each block is a node in the graph
+- Each pointer is an edge in the graph
+- Locations not in the heap that contain pointers into the heap are called root nodes (e.g. registers, locations on the stack, global variables)
+- ![](../0_Attachment/Pasted%20image%2020250422161442.png)
+
+Mark and Sweep Collecting
+
+- When out of space
+  - Use extra mark bit in the head of each block
+  - Mark: Start at roots and set mark bit on each reachable block
+  - Sweep: Scan all blocks and free blocks that are not marked
+  - ![](../0_Attachment/Pasted%20image%2020250422161650.png)
