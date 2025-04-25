@@ -1413,3 +1413,120 @@ void T_consume() {
   ```
 
 - 并不合适
+
+## 17 并发 Bugs
+
+> 人类本质上是 sequential creature, 因此总是通过"块的顺序执行"这一简化模型去理解并发程序, 也因此带来了数据竞争, Atomicity violation (本应原子完成不被打断的代码被打断), Order violation (本应按某个顺序完成的未能被正确同步) 等问题. 数据竞争非常危险, 我们在编程时要尽力避免.
+
+### 致命的并发 Bugs 和数据竞争
+
+数据竞争 (Data Race)
+
+- **不同的线程**同时访问**同一内存**, 且**至少有一个是写**. 
+- Since C11: data race is undefined behavior
+- 消灭了数据竞争 = 保证 serializability
+  - 可能竞争的内存访问要么互斥, 要么同步 (回到顺序执行)
+
+### 死锁
+
+死锁
+
+- AA-Deadlock: 锁住的执行流中再次申请同一把锁
+- ABBA-Deadlock
+  - 哲学家吃饭问题
+
+在实际系统中避免死锁
+
+- Lock Ordering
+  - 任意时刻系统中的锁都是有限的
+  - 可以给所有锁编号 (Lock Ordering), 严格按照从小到大的顺序获得锁
+- Proof
+  - 任意时刻, 总有一个线程获得 “编号最大” 的锁
+  - 这个线程总是可以继续运行
+- LockDep
+  - 动态维护"锁依赖图"和环路检测
+
+### 原子性/顺序违反
+
+并发控制的机制: 后果自负
+
+- 互斥锁 (lock/unlock) 实现原子性
+  - 忘记上锁--原子性违反 (Atomicity Violation, AV)
+- 条件变量/信号量 (wait/signal) 实现先后顺序同步
+  - 忘记同步--顺序违反 (Order Violation, OV)
+
+## 18 真实世界的并发编程 (1)
+
+> 我们在"更好的编程"这条路上从未停止过努力. 针对不同应用的应用, 最终形成了 “领域特定” 的解决方案: Web 中的异步编程, 高性能计算中的 MPI 和 OpenMI, 数据中心中的 goroutines. 更有趣的是, 我们可以看到: 改变世界的技术, 往往只是一个小小的奇思妙想, 最终坚持到底得到的.
+
+背景
+
+- 并发编程核心抽象: 计算图
+- 按照之前的方法 (条件变量 / 信号量) 来实现计算图会在代码中引入众多**干扰代码**
+- 编程语言会增加一些功能受限的**语法**, 本质上都是描述计算图, 但能避免许多问题
+
+### 高性能计算中的并发编程
+
+来源: 密集型科学计算任务, 比如物理系统模拟, 挖矿, AI
+
+特点: 物理世界具有"空间局部性", "模拟物理世界"的系统具有 embarrassingly parallel 的特性
+
+计算图容易静态切分
+
+- 机器级分解: [MPI](https://hpc-tutorials.llnl.gov/mpi/) - message passing libraries (机器间通信)
+
+- 线程级分解: [OpenMP](https://www.openmp.org/) - multi-platform shared-memory parallel programming (C/C++ and Fortran)
+
+  ```c
+  // 对非 cs 专业友好的机制
+  #pragma omp parallel num_threads(128)
+  for (int i = 0; i < 1024; i++) {
+  }
+  ```
+
+### 我们身边的并发编程
+
+Web 1.0
+
+- 只有 HTML, 没有 css, \<font\>, \<table\>, vbscript 和切图工程师一统天下
+
+Web 1.0 -> 2.0
+
+- Ajax: 运行网页实现"后台刷新", 即悄悄请求后端然后更新 DOMTree (让网页实现应用一般的功能)
+- jQuery: A DOM Query Language (编程抽象)
+
+Web 2.0 时代的并发编程: event-based concurrency (动态计算图)
+
+-  **禁止任何计算节点并行** (和高性能计算完全不同的选择)
+- 允许网络请求, sleep 在后台执行, 执行完后产生一个新的**事件** (计算节点)
+- 基于假设: 网络访问占大部分时间, 浏览器内计算只是小部分
+- 缺点: Callback hell (回调地狱), 不断嵌套的执行流
+
+优化: 回归"描述计算图"
+
+- 增加更加现代的前端"语法糖"
+
+### 数据中心中的并发编程
+
+需要高吞吐 (QPS) & 低延迟的事件处理
+
+- 处理事件可能需要读写持久存储或请求网络上的服务
+  - 延迟不确定
+- 线程维护和上下文切换都会带来开销
+
+版本答案: Serverless Computing
+
+- Function as a Service (FaaS): 系统动态调整计算资源的分配
+  - 程序员仅需编写大号的幂等的 Javascript 程序
+
+背后系统的实现
+
+- 数据保持一致 (Consistency), 服务时刻可用 (Availability), 容忍机器离线 (Partition tolerance) 不可兼得
+
+协程: 操作系统"不感知"的上下文切换
+
+- 进程内独立堆栈, 共享内存的**状态机**
+- 但"一直执行", 直到 `yield()` 主动放弃处理器
+- 其在同一个操作系统线程中执行, 可以由**程序**控制调度, 除了内存, 不会占用额外操作系统资源
+
+Go 和 Goroutine: 兼有多处理器并行和轻量级并发
