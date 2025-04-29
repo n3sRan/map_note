@@ -555,7 +555,7 @@ Shared Libraries
   - `.`, a link to itself
   - `..`, 
   - a link to the parent directory in the directory hierarchy
-- Directory Hierarchy: 1
+- Directory Hierarchy: ![](../0_Attachment/Pasted%20image%2020250408161229.png)
 
 #### On Short Counts
 
@@ -575,7 +575,7 @@ robust I/O package
 Buffered I/O
 
 - File has associated buffer to hold bytes that have been read from file but not yet read by user code *(不用应用程序每次需要一个或少量字符时都进行一次系统调用, 而是先调用一次, 把若干字符缓存, 后续应用程序只需从缓冲区提取)*
-- ![](../0_Attachment/Pasted%20image%2020250408161229.png)
+- ![](../0_Attachment/Pasted%20image%2020250429104006.png)
 
 ### Metadata, sharing, and redirection
 
@@ -729,3 +729,335 @@ Mark and Sweep Collecting
   - Mark: Start at roots and set mark bit on each reachable block
   - Sweep: Scan all blocks and free blocks that are not marked
   - ![](../0_Attachment/Pasted%20image%2020250422161650.png)
+
+## 21 Network Programming: Part 1
+
+> 基于 DS V3 整理, 删除了计算机网络相关内容
+
+### Concept
+
+客户端-服务器模型 (大多数网络应用基于客户端-服务器架构)
+
+- 服务器: 管理资源 (如数据, 服务) , 处理客户端请求.
+- 客户端: 发起请求并接收服务 (如浏览器, APP).
+- 交互模式: 客户端通过请求激活服务器 (类似自动售货机).
+- 进程与主机: 客户端和服务器是运行在不同或相同主机上的**进程**.
+
+互联网协议 (IP) 
+
+1. 核心功能: 
+   - 命名机制: 统一IP地址格式 (如IPv4的32位地址).
+   - 数据传输: 通过封装数据包 (含头部和负载) 跨网络传输.
+   - 路由选择: 路由器根据目标地址转发数据包.
+2. IPv4与IPv6: 
+   - IPv4: 32位地址 (如`128.2.194.242`) , 当前主流.
+   - IPv6: 128位地址, 兼容性仍在过渡中.
+3. IP地址表示: 
+   - 结构体: `struct in_addr`存储网络字节序 (大端序) 的32位地址.
+   - 点分十进制: 如 `0x8002C2F2` 转为 `128.2.194.242`.
+
+域名系统 (DNS) 
+
+- 将域名 (如`www.cs.cmu.edu`) 映射到IP地址.
+- 特点: 
+  - 分布式数据库, 支持多对一, 一对多映射.
+  - 命令行工具: `nslookup` 查询域名解析结果
+  - 本地域名`localhost`固定映射到`127.0.0.1` (回环地址).
+
+互联网连接
+
+1. 连接特性
+   - 点对点: 两端进程通信. 
+   - 全双工: 双向同时传输. 
+   - 可靠传输: 数据按序到达 (TCP协议).
+2. 端口与套接字
+   - 端口: 16位整数标识进程 (如 HTTP 服务使用端口 80).
+   - 套接字 (Socket) : 通信端点, 由IP地址和端口唯一标识, 如`(cliaddr:cliport, servaddr:servport)`.
+
+### Sockets Interface
+
+概览 (CSAPP 库函数的封装方向): ![](../0_Attachment/Pasted%20image%2020250429153514.png)
+
+#### Socket Address Structures
+
+Generic socket address
+
+- 用作 `connect()`, `bind()`, `accept()` 的地址参数
+
+- 设计背景: 早期 C 语言缺乏 `void*` 通用指针
+
+  ```c
+  typedef struct sockaddr SA;
+  struct sockaddr {
+  	uint16_t sa_family; /* Protocol family */
+  	char sa_data[14]; /* Address data. */
+  };
+  ```
+
+- ![](../0_Attachment/Pasted%20image%2020250429152340.png)
+
+Internet-­‐specific socket address
+
+- 需强制转换为 `struct sockaddr*` 传递到相关函数
+
+  ```c
+  struct sockaddr_in {
+      uint16_t      sin_family; /* Protocol family */
+      uint16_t      sin_port;
+      struct in_addr sin_addr;
+      unsigned char  sin_zero[8];
+  };
+  ```
+
+- ![](../0_Attachment/Pasted%20image%2020250429152359.png)
+
+`getaddrinfo()`
+
+- 网络编程中的关键函数, 其核心功能是**自动化处理地址和端口转换**, 使代码与协议 (如 IPv4/IPv6) 无关
+
+  ```c
+  int getaddrinfo(const char *host, /* Hostname or address */
+  				const char *service, /* Port or service name */
+  				const struct addrinfo *hints,/* Input parameters */
+  				struct addrinfo **result); /* Output linked list */
+  
+  void freeaddrinfo(struct addrinfo *result); /* Free linked list */
+  
+  const char *gai_strerror(int errcode); /* Return error msg */
+  ```
+
+- `addrinfo`
+
+  ```c
+  struct addrinfo {
+      int ai_flags; /* Hints argument flags */
+      int ai_family; /* First arg to socket function */
+      int ai_socktype; /* Second arg to socket function */
+      int ai_protocol; /* Third arg to socket function */
+      char *ai_canonname; /* Canonical host name */
+      size_t ai_addrlen; /* Size of ai_addr struct */
+      struct sockaddr *ai_addr; /* Ptr to socket address structure */
+      struct addrinfo *ai_next; /* Ptr to next item in linked list */
+  };
+  ```
+
+  ![](../0_Attachment/Pasted%20image%2020250429152838.png)
+  
+- 示例 *(DS V3 生成)*
+
+  - 使用 `getaddrinfo()` (推荐)
+
+    ```c
+    struct addrinfo hints = {0};
+    hints.ai_family = AF_UNSPEC; // 支持 IPv4/IPv6
+    hints.ai_socktype = SOCK_STREAM;
+    
+    struct addrinfo *result;
+    getaddrinfo("www.example.com", "80", &hints, &result);
+    
+    // 遍历 result 链表尝试连接
+    int sockfd;
+    for (struct addrinfo *p = result; p != NULL; p = p->ai_next) {
+        sockfd = socket(p->ai_family, p->ai_socktype, p->ai_protocol);
+        if (connect(sockfd, p->ai_addr, p->ai_addrlen) == 0) {
+            break; // 连接成功
+        }
+        close(sockfd);
+    }
+    freeaddrinfo(result);
+    ```
+
+  - 不使用 `getaddrinfo()` (需要自行适配协议)
+
+    ```c
+    // 仅支持 IPv4，硬编码 DNS 查询和端口
+    struct hostent *h = gethostbyname("www.example.com");
+    struct sockaddr_in addr;
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(80); // 未处理服务名转换（如 "http"→80）
+    memcpy(&addr.sin_addr, h->h_addr, h->h_length);
+    
+    int sockfd = socket(AF_INET, SOCK_STREAM, 0);
+    connect(sockfd, (struct sockaddr*)&addr, sizeof(addr));
+    ```
+
+
+`getnameinfo()`
+
+- 反向转换 (地址到域名/服务名)
+
+  ```c
+  int getnameinfo(const SA *sa, socklen_t salen, /* In: socket addr */
+                  char *host, size_t hostlen, /* Out: host */
+                  char *serv, size_t servlen, /* Out: service */
+                  int flags); /* optional flags */
+  ```
+
+
+#### Socket Interface Functions
+
+`socket()`
+
+- 创建套接字描述符
+- `int socket(int domain, int type, int protocol);`
+- 最佳实践: 通过 `getaddrinfo` 提供 `addr` 和 `addrlen`
+
+`bind()`
+
+- 将服务器地址与套接字描述符关联
+- `int bind(int sockfd, SA *addr, socklen_t addrlen);`
+- 最佳实践: 通过 `getaddrinfo` 提供 `addr` 和 `addrlen`
+
+`listen()`
+
+- `int listen(int sockfd, int backlog);`
+- 将主动套接字转为监听套接字, `backlog` 指定待处理连接队列长度
+
+`accept()`
+
+- `int accept(int listenfd, SA *addr, socklen_t *addrlen);`
+- 阻塞等待监听描述符上的连接请求, 客户端通过 `connect` 发起请求, 返回已连接描述符用于通信
+
+`connect()`
+
+- `int connect(int clientfd, SA *addr, socklen_t addrlen);`
+- 向服务器发起连接请求
+
+## 22 Network Programming: Part 2
+
+### Socket Interface
+
+#### Socket Helper Function
+
+- 建立客户端连接: `int open_clientfd(char *hostname, char *port)`
+- 创建监听套接字: `int open_listenfd(char *port)`
+
+### Demo
+
+#### Echo Client & Iterative Echo Server
+
+- *直接读源码*
+
+#### Tiny Web Server
+
+- *也可以直接读源码*, 以下是一些概念
+- Web Content: a sequence of bytes with an associated MIME type
+- Static and Dynamic Content
+  - Static content: content stored in files and retrieved in response to an HTTP request, like HTML files, images...
+  - Dynamic content: content produced on-­‐the-­‐fly in response to an HTTP request, like content produced by a program executed by the server on behalf of the client
+- URL
+- HTTP Requests
+
+#### Test Tool
+
+- telnet
+
+## 23 Concurrent Programming
+
+> 基于 DS V3 整理
+
+### Concurrent Programming is Hard
+
+1. **难点核心**: 
+   - 人脑习惯顺序思维, 时序概念容易误导
+   - 穷举计算机系统中的事件序列几乎不可能
+   - 主要问题类型: 
+     - **竞态条件**: 结果依赖不可控的调度决策 (如航班最后座位分配)
+     - **死锁**: 资源分配不当导致进程停滞 (如交通僵局)
+     - **活锁/饥饿/公平性**: 外部事件或调度策略阻碍任务进展 (如排队被插队)
+2. **传统迭代服务器的缺陷** (Tiny Web): 
+   - 顺序处理请求 (处理完 Client1 才能处理 Client2)
+   - 当服务器阻塞在某个客户端时, 其他客户端无法响应
+   - 图示说明: 客户端请求在 TCP 监听队列中堆积 (TCP backlog)
+
+### Concurrent Server Design
+
+#### Process-based
+
+- 原理: 为每个 client `fork()` 子进程, 父子进程共享监听描述符副本
+
+  ```c
+  while(1) {
+    connfd = Accept(...);
+    if (Fork() == 0) {
+      Close(listenfd);
+      echo(connfd);
+      Close(connfd);
+      exit(0);
+    }
+    Close(connfd);
+  }
+  ```
+
+- 问题与要点
+
+  - **僵尸进程处理**: 需注册 `SIGCHLD` 处理函数
+  - **描述符引用计数**: `fork()`后 `connfd` 引用计数=2, 必须显式关闭
+  - **TCP监听队列**: **内核**维护未完成连接队列 (SYN_RCVD)和已完成队列 (ESTABLISHED)
+
+- 优缺点
+
+  - ✅ 天然隔离, 无共享状态
+  - ✅ 简单直接
+  - ❌ 进程控制开销大
+  - ❌ 进程间通信复杂 (需管道/共享内存)
+
+#### Event-based
+
+- 原理
+  - **单进程**使用 I/O 多路复用 (`select`/`epoll`)
+  - 维护活跃连接集合
+  - 事件循环处理: 
+    1. 监听描述符就绪 -> accept新连接
+    2. 连接描述符就绪 -> 处理请求
+- 关键特点
+  - 完全控制调度策略
+  - 需手动管理部分HTTP请求 (如不完整请求头)
+- 优缺点
+  - ✅ 单控制流, 易调试
+  - ✅ 高性能 (nginx/Node.js采用)
+  - ❌ 代码复杂度高
+  - ❌ 无法利用多核 (如果想利用多核必须其多个进程)
+  - ❌ 颗粒度并发困难
+
+#### Thread-based
+
+线程
+
+- 线程 = 独立控制流 + 共享地址空间
+- 线程上下文: 寄存器/栈指针/程序计数器
+- 线程共享: 代码段/全局数据/打开文件
+
+实现
+
+- **线程分离**: 必须调用`pthread_detach`避免内存泄漏
+
+- **资源管理**: `connfd` 需动态分配防止共享栈风险
+
+- **线程安全**: 所有调用函数需线程安全
+
+  ```c
+  // main()
+  while(1) {
+    connfd_ptr = malloc(...); // 避免竞态
+    *connfd_ptr = Accept(...);
+    Pthread_create(..., thread, connfd_ptr);
+  }
+  
+  void* thread(void* vargp) {
+    int connfd = *((int*)vargp);
+    Pthread_detach(pthread_self());
+    free(vargp);
+    echo(connfd);
+    Close(connfd);
+    return NULL;
+  }
+  ```
+
+线程 vs 进程
+
+- 相似性: 独立控制流/并发执行/上下文切换
+- 核心差异
+  - 线程共享地址空间
+  - 线程创建开销小 (Linux: 10K cycles vs 20K cycles)
+  - 资源自动回收 (进程需显式 `wait`)
