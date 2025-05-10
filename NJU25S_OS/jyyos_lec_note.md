@@ -1618,7 +1618,6 @@ NES Picture Processing Unit 绘图模型
   }
   ```
 
-  
 
 
 ### AI 时代的并行编程
@@ -1639,3 +1638,199 @@ SIMT: Single Instruction, Multiple Threads
   ```
 
 CUDA 擅长固定模式, 海量的计算
+
+## 20 设备和驱动程序
+
+> 输入/输出设备可以说是五花八门, 你也看到越来越多的设备上甚至 “自带电脑”. 但无论如何, 操作系统都把它们抽象成一个可以读写, 可以控制的, 实现了 struct file_operations 的文件 (操作系统对象)
+
+### 输入/输出设备
+
+从插入U盘到看到里面的文件, 发生了什么 (`/dev/` 下的对象不会凭空创建)
+
+- **udev**: Linux 内核的设备管理器, 负责动态管理 `/dev` 目录下的设备节点
+  - 当设备插入 (如U盘) 或移除时, udev 会根据预定义的规则 `/lib/udev/rules.d`, 自动创建/删除设备节点, 并执行相关操作, 如加载驱动, 设置权限等.
+- **udisks2**: 当插入 USB 驱动器, SD 卡等存储设备时, `udisks2` 会通过 `udev` 检测到设备, 并触发后续操作 (真正负责 mount)
+
+I/O 设备: 一个能与 CPU 交换数据的接口/控制器
+
+-  几组约定好功能的线 (寄存器)
+  - 通过握手信号从线上读出/写入数据
+-  给寄存器"赋予" 一个内存地址 (Address Decoder)
+  - CPU 可以直接使用**指令** (in/out/MMIO) 和设备交换数据
+  - ![](../0_Attachment/Pasted%20image%2020250507164158.png)
+-  GPIO (General Purpose Input/Output)
+   -  仅需一根线和一条指令 (树莓派), 通过 Memory-mapped I/O 直接读取/写入电平信号
+   -  从控制 LED 发光到发射核弹
+
+
+### 输入/输出设备案例
+
+串口
+
+- COM1 (Communication 1)
+
+  ```c
+  #define COM1 0x3f8
+  
+  static int uart_init() {
+    outb(COM1 + 2, 0);   // 控制器相关细节
+    outb(COM1 + 3, 0x80);
+    outb(COM1 + 0, 115200 / 9600);
+    ...
+  }
+  
+  static void uart_tx(AM_UART_TX_T *send) {
+    outb(COM1, send->data);
+  }
+  
+  static void uart_rx(AM_UART_RX_T *recv) {
+    recv->data = (inb(COM1 + 5) & 0x1) ? inb(COM1) : -1;
+  }
+  ```
+
+键盘控制器
+
+磁盘控制器
+
+- ATA (Advanced Technology Attachment)
+
+  ```c
+  void readsect(void *dst, int sect) {
+    waitdisk();
+    out_byte(0x1f2, 1);          // sector count (1)
+    out_byte(0x1f3, sect);       // sector
+    out_byte(0x1f4, sect >> 8);  // cylinder (low)
+    out_byte(0x1f5, sect >> 16); // cylinder (high)
+    out_byte(0x1f6, (sect >> 24) | 0xe0); // drive
+    out_byte(0x1f7, 0x20);       // command (write)
+    waitdisk();
+    for (int i = 0; i < SECTSIZE / 4; i ++)
+      ((uint32_t *)dst)[i] = in_long(0x1f0); // data
+  }
+  ```
+
+打印机
+
+- 根据指令 (字节流描述) 将文字/图片打印到纸张上
+- PostScript: 一种描述页面布局的 DSL, PDF 是 PostScript 的 superset
+- 实现打印机: 将汇编语言翻译成机械部件动作
+
+总线
+
+- 提供设备的**虚拟化**: 注册和转发, 从而实现硬件生态的**拓展性**
+  - 把收到的地址 (总线地址) 和数据转发到相应的设备上
+  - 例子: port I/O 的端口就是总线上的地址, IBM PC 的 CPU 其实只看到这一个 I/O 设备
+- PICe 总线
+  - 接口: 75W 供电, 需要 6-pin, 8-pin 的额外供电
+  - 数据传输
+    - PCIe 6.0 x16 带宽达到 128GB/s, 于是我们有了 800Gbps 的网卡
+    - 总线自带 DMA (专门执行 memcpy 的处理器)
+  - 中断管理
+    - 将设备中断转发到操作系统 (Message-signaled Interrupts)
+
+### 设备驱动程序
+
+程序访问设备
+
+- 设备是可以在程序之间共享的, 程序不能**直接**访问设备的寄存器
+- 解决: 实现设备的**虚拟化** (就像 CPU 和内存一样)
+  - Everything is a File: 像操作文件一样访问设备
+
+设备驱动程序
+
+- 一个 `struct file_operations` 的实现: 把系统调用**翻译**成与设备能听懂的数据 (就是一段普通的内核代码)
+- 例子
+  - `/dev/null`: 其读写函数就是 do nothing
+  - `/proc/stat`: 实现读写操作即可 (并非真正读写了磁盘的一个文件, 而是访问操作系统所管理的对象)
+  - `/dev/nuke0`
+
+配置设备
+
+- 设备除了传输数据之外还需要**配置** (打印机卡纸, 键盘跑马灯...)
+- 实现方法
+  1. 控制作为数据流的一部分 (ANSI Escape Code), 例如控制向终端输出的字体颜色
+  2. 提供一个新的接口 (request-response)
+
+ioctl
+
+- "非数据"的设备功能几乎全部依赖 ioctl
+- 设备的复杂性无法降低, 使其成了屎山
+
+## 21 存储设备原理
+
+### 1-Bit 的存储: 磁铁
+
+原理: 电磁感应
+
+磁带: 1928
+
+- 存储特性: 价格低 (廉价材料, 几乎不涉及大规模集成电路), 容量高, 可靠性高 (适当封装)
+- 读写性能: 顺序读写勉强 (需要等待定位), 随机读写几乎完全不行
+- 应用场景: 冷数据的存档和备份
+
+磁鼓: 1932
+
+- 用旋转的二维平面存储数据 (无法内卷, 容量变小)
+- 读写延迟不会超过旋转周期 (随机读写速度大幅提升)
+
+磁盘: 1956
+
+- ![](../0_Attachment/Pasted%20image%2020250510144955.png)
+- 存储特性
+  - 价格低: 高密度, 低成本
+  - 容量高: 2.5D, 上万磁道
+  - 可靠性高 (高速运转的机械部件是潜在的威胁)
+- 读写性能
+  - 顺序读写: 较高
+  - 随机读写: 勉强 (需要等待定位)
+- 应用场景: 计算机系统的主力数据存储 (便宜; 坏了还有可能修)
+- 性能调优: 通过缓存/调度等缓解
+
+### 1-Bit 的存储: 挖坑
+
+光盘, Compact Disk (CD, 1980)
+
+- 在反射平面 (1) 上挖上粗糙的坑 (0), **激光**扫过表面, 就能读出坑的信息来
+- **容易复制**
+- 存储特性
+  - 价格极低
+  - 容量高 (当然, 也没有那么高)
+  - 可靠性高 (你划伤的是没有数据的那一面)
+- 读写性能
+  - 顺序读: 一般
+  - 随机读: 低；很难写入 (CD/R & CD/RW)
+- 应用场景: 一个时代的数字内容分发
+
+### 1-Bit 的存储: 电荷
+
+闪存, Flash Memory
+
+- 原理: ![](../0_Attachment/Pasted%20image%2020250510145401.png)
+- 存储特性
+  - 价格低: 大规模集成电路
+  - 容量高
+  - 可靠性高: 集成电路封装, 不怕摔
+- 读写性能: 极高, 而且有极高的扩展性 (电路是天然并行的), **容量越大, 速度越快**
+- 应用场景: Tape is Dead, Disk is Tape, Flash is Disk, RAM Locality is King (Gim Gray, 2006)
+- **FTL**: Flash Translation Layer
+  - SSD, 优盘, 甚至是 TF 卡里都藏了**完整的计算机系统**
+  - Wear Leveling: 用软件使写入变得"均匀" (类比虚拟内存)
+  - 这也使得设备可以被"伪造"
+
+
+### 存储设备在操作系统中的抽象
+
+实现**寻址能力**的代价 (从 1-bit 到 1TB)
+
+- 磁盘: 位置划分 + 扇区头
+- 电路: 行 (字线) 和列 (位线) 选通信号
+  - 这些都会消耗额外的资源 (面积)
+- 解决方法: **按块访问**
+  - "一块"可以共享 metadata
+    - 物理分割, Erase 信号, 纠错码……
+    - 磁盘是 `struct block disk[NUM_BLOCKS]`, Block 是读/写的最小单位
+
+Linux Bio: request/response 接口
+
+- 上层 (进程, 文件系统……) 可以任意提交请求
+- 下层 (Bio + Driver) 负责调度

@@ -927,18 +927,18 @@ Internet-­‐specific socket address
 
 ### Socket Interface
 
-#### Socket Helper Function
+Socket Helper Function
 
-- 建立客户端连接: `int open_clientfd(char *hostname, char *port)`
-- 创建监听套接字: `int open_listenfd(char *port)`
+- `int open_clientfd(char *hostname, char *port)`: 建立客户端连接
+- `int open_listenfd(char *port)`: 创建监听套接字
 
-### Demo
+### Example
 
-#### Echo Client & Iterative Echo Server
+Echo Client & Iterative Echo Server
 
 - *直接读源码*
 
-#### Tiny Web Server
+Tiny Web Server
 
 - *也可以直接读源码*, 以下是一些概念
 - Web Content: a sequence of bytes with an associated MIME type
@@ -948,7 +948,7 @@ Internet-­‐specific socket address
 - URL
 - HTTP Requests
 
-#### Test Tool
+Test Tool
 
 - telnet
 
@@ -1061,3 +1061,193 @@ Internet-­‐specific socket address
   - 线程共享地址空间
   - 线程创建开销小 (Linux: 10K cycles vs 20K cycles)
   - 资源自动回收 (进程需显式 `wait`)
+
+## 24 Synchronization: Basics
+
+> 基于 DS V3 整理
+
+Shared Variables in Threaded C Programs
+
+- A variable `x` is **shared** if multiple threads reference at least one instance of `x`.
+- **Not** strictly determined by variable scope (global vs. stack).
+- Depends on memory mapping and thread access patterns.
+
+Thread Memory Model
+
+- **Conceptual Model**
+  - Threads run within a single process.
+  - Shared across threads:
+    - Code, data, heap, shared libraries.
+    - Open files, signal handlers.
+  - Private to each thread:
+    - Thread ID, stack, stack pointer, registers (PC, condition codes, GP registers).
+- **Operational Reality**
+  - Threads can *read/write* other threads' stacks (though not enforced by the model).
+  - This mismatch introduces potential errors and confusion.
+
+Synchronization Issues
+
+- **Problem**: Uncontrolled access to shared variables leads to race conditions.
+- **Assembly Analysis**
+  - Increment operation (`cnt++`) involves non-atomic steps:
+    - **Load** `cnt` into register.
+    - **Update** register.
+    - **Store** register back to `cnt`.
+  - Concurrent interleaving of these steps corrupts the result.
+- **Progress Graphs**: Trajectories represent possible execution orders of thread instructions. ![](../0_Attachment/Pasted%20image%2020250505142158.png)
+
+Semaphores for Mutual Exclusion
+
+- **Semaphore**: Non-negative integer synchronization variable with atomic `P()` (wait) and `V()` (signal) operations.
+
+  - **Binary Semaphore (Mutex)**: Value `0` (locked) or `1` (unlocked).
+  - **Counting Semaphore**: Tracks available resources.
+
+- **Operations**
+
+  - `P(s)`: Decrement `s` if >0; else block until `s>0`.
+  - `V(s)`: Increment `s`; wake one waiting thread (if any).
+
+- **Usage**
+
+  ```c
+  sem_t mutex; 
+  sem_init(&mutex, 0, 1); // Initialize to 1 (unlocked)
+  
+  // Critical section:
+  P(&mutex); 
+  cnt++; // cnt is in memory
+  V(&mutex);
+  ```
+
+## 25 Synchronization: Advanced
+
+> 基于 DS V3 整理
+
+Producer-Consumer Problem
+
+- Synchronization Pattern
+
+  - **Producer** waits for empty slots, inserts items, notifies consumers.
+  - **Consumer** waits for items, removes them, notifies producers.
+
+- Shared Buffer (`sbuf`)
+
+  - **Components**
+
+    - `buf[]`: Array for items.
+    - `front`/`rear`: FIFO indices.
+    - Semaphores
+      - `mutex`: Mutual exclusion for buffer access.
+      - `slots`: Counts empty slots (initialized to buffer size `n`).
+      - `items`: Counts available items (initialized to 0).
+
+  - **Operations**
+
+    ```c
+    // insert
+    void sbuf_insert(sbuf_t *sp, int item) {
+        P(&sp->slots);   // Wait for slot
+        P(&sp->mutex);   // Lock buffer
+        sp->buf[(++sp->rear) % sp->n] = item;
+        V(&sp->mutex);   // Unlock buffer
+        V(&sp->items);   // Announce new item
+    }
+    
+    // remove
+    int sbuf_remove(sbuf_t *sp) {
+        P(&sp->items);   // Wait for item
+        P(&sp->mutex);   // Lock buffer
+        int item = sp->buf[(++sp->front) % sp->n];
+        V(&sp->mutex);   // Unlock buffer
+        V(&sp->slots);   // Announce free slot
+        return item;
+    }
+    ```
+
+Readers-Writers Problem
+
+- Problem
+
+  - **Readers**: Read shared data (no modification).
+  - **Writers**: Modify shared data (require exclusive access).
+
+- Variants
+
+  1. **First R-W Problem** (favors readers): No reader waits unless a writer is already granted access.
+  2. **Second R-W Problem** (favors writers): Writers get priority once ready.
+
+- Solution (First R-W)
+
+  - **Semaphores**
+
+    - `mutex`: Protects `readcnt` (initialized to 1).
+    - `w`: Controls writer access (initialized to 1).
+
+  - **Reader Workflow**
+
+    ```c
+    void reader() {
+        while (1) {
+            P(&mutex);
+            readcnt++;
+            if (readcnt == 1) P(&w);  // First reader blocks writers
+            V(&mutex);
+            // Read data...
+            P(&mutex);
+            readcnt--;
+            if (readcnt == 0) V(&w);  // Last reader unblocks writers
+            V(&mutex);
+        }
+    }
+    ```
+
+  - **Writer Workflow**
+
+    ```c
+    void writer() {
+        while (1) {
+            P(&w);          // Block all readers/writers
+            // Write data...
+            V(&w);
+        }
+    }
+    ```
+
+Prethreaded Concurrent Server
+
+- 关键: 预先创建好 worker, 而不是请求到达时才进行 fork / 创建线程
+
+  ```c
+  int main() {
+      sbuf_init(&sbuf, SBUFSIZE);
+      for (int i = 0; i < NTHREADS; i++)
+          pthread_create(&tid, NULL, worker_thread, NULL);
+      while (1) {
+          connfd = Accept(...);
+          sbuf_insert(&sbuf, connfd);
+      }
+  }
+  
+  void *worker_thread(void *vargp) {
+      while (1) {
+          int connfd = sbuf_remove(&sbuf);
+          echo_cnt(connfd);  // Thread-safe service routine
+          Close(connfd);
+      }
+  }
+  ```
+
+Thread Safety
+
+- A function is **thread-safe** if it produces correct results when called concurrently by multiple threads.
+- **Unsafe Classes**
+  1. Unprotected Shared Variables: Fix with semaphores.
+  2. Stateful Functions (e.g., static `rand()` seed): Pass state as arguments.
+  3. Returning Pointers to Static Data (e.g., `ctime()`): Use lock-and-copy or rewrite. (`ctime_r()`)
+  4. Calling Unsafe Functions: Replace with thread-safe alternatives.
+- **Reentrant Functions**: Access no shared variables (subset of thread-safe functions).
+
+Deadlock
+
+- *详情见 OS*
