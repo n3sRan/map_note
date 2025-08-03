@@ -1834,3 +1834,479 @@ Linux Bio: request/response 接口
 
 - 上层 (进程, 文件系统……) 可以任意提交请求
 - 下层 (Bio + Driver) 负责调度
+
+## 22 文件系统 API
+
+> 目录 (链接) 和文件 (对象) 的简洁抽象赋予了我们管理对象的能力. 操作系统的设计者也扩展了文件的元数据, 使我们能给文件打上复杂的标签, 从而使应用程序 (和操作系统) 提供更好的服务; 甚至还引入了操作目录树的 API, 例如 OverlayFS.
+
+### 目录树
+
+磁盘 = 块 (字节) 序列
+
+- 一个磁盘可以类比为一本书, 每一页纸存储了数据
+- 支持随机访问 (翻到某一页)
+
+文件 = 虚拟的磁盘
+
+- `hello.c`, `a.out`...
+- 看不到一页纸的概念, 只有字节序列, 支持 `read, write, lseek, ftruncate...
+- 需求: 怎么**管理**系统中众多的文件
+
+树状分层索引
+
+- 将虚拟磁盘 (文件) 组织成层次结构 (类比图书馆中有许多索引)
+- 利用了**信息的局部性**
+- Filesystem Hierarchy Standard (FHS): 约定俗成的目录结构
+  - macOS 是 UNIX 的内核 (BSD), 但不遵循 Linux FHS
+
+目录树 API (增删改查)
+
+```c
+// 创建目录
+int mkdirat(int dirfd, const char *pathname, mode_t mode);
+// 删除目录
+int unlinkat(int fd, const char *path, int flag);
+// 读取目录
+ssize_t getdents64(int fd, void *dirp, size_t count);
+```
+
+硬链接
+
+- 允许一个文件被多个目录引用
+- 通过 `ls -i` 查看, 不能链接目录, 不能跨文件系统
+- 可以将目录树上的**节点**是做**文件本身** (存有数据), 指向节点的**边**为**文件名** (链接名), 硬链接允许多条边指向一个节点 (这也解释了删除文件的系统调用称为 unlink)
+
+软链接
+
+- 在文件里存储一个"跳转提示", 当引用这个文件时, 去找另一个文件, 另一个文件的绝对/相对路径以文本形式存储在文件里, 可以跨文件系统, 可以链接目录, ...
+- 类似"快捷方式", 链接指向的位置不存在也没关系
+- 应用: "伪造文件系统"
+  - Nix: 把所有软件包的所有版本都集中存储, 然后用符号链接构建一个完全虚拟的环境
+
+### 文件的元数据
+
+文件是操作系统中的对象, 对象就有**属性**, 通过 `ls -l` 实现
+
+元数据
+
+- Type
+- Mode
+- Links
+
+Extended Attributes (xattr)
+
+- 每个文件可以维护一个任意的 key-value dictionary
+- 应用
+  - 向量索引
+  - Access Control List (访问控制列表)
+    - 实现比 user, group, other 更精细的访问控制
+- 缺陷
+  - 不是所有的文件系统都支持
+  - 兼容性差, `cp` 文件时 `xattrs` 会丢失, 需要 `cp --preserve=xattr`
+
+### 更重量级的操作
+
+从无到有的目录树
+
+- `mount`: 把一个**块设备**上的目录树 “放到” 已有的**目录**中, 实际的 `/`是 pivot_root 时的 mount point
+- 如何挂载一个文件?
+
+Lookback (回环) 设备
+
+- 设备驱动把设备的 `read/write` 翻译成文件的 `read/write`
+
+OverlayFS (UnionFS, 联合挂载): 实现**目录**的虚拟化
+
+- lowerdir: 只读层 (修改会被丢弃)
+- upperdir: 可写层 (修改会被保留)
+- workdir: 操作系统用的临时目录
+
+## 23 文件系统实现
+
+> 把文件系统理解成一个 “数据结构”, 就不难理解经典和现代文件系统的设计理念--所有人都是在为了合适的硬件, 合适的读写 workload 上, 用合适的方式组织数据, 维护树状 (和链接) 的目录结构和随机访问的文件操作
+
+文件系统就是块设备上的存储结构 (ADT)
+
+- 类比内存上数据结构 (列表, 集合) 的实现
+- 只不过不是 RAM 而是 block I/O
+
+可以用块设备虚拟块设备: Logical Volume Manager (LVM)
+
+### File Allocation Table
+
+实现文件系统
+
+- 敌人: **读/写放大**
+  - 存储设备的特性导致被迫只能读写连续的一块数据
+- 朋友: **局部性**
+  - 适当地排布数据, 使得临近的数据有 "一同访问" 的倾向
+  - 数据暂时停留在内存, 延迟写回
+
+软盘时代, 需要实现一个**相当小**的文件系统
+
+- **背景**
+  - 单面软盘只有320个512B的扇区 (sector), 总容量160KB
+  - 目录中一般只有几个, 十几个文件, 且以小文件为主 (几个 block 以内)
+- **实现**
+  - 文件: 使用 `struct block *` 的链表
+  - 目录: 一个普通的文件, 操作系统会把文件内容解读成 `struct dentry[];`
+- **File Allocation Table**: 集中保存所有指针
+  - 在**内存**里缓存一份 FAT, 延迟写回, 读/写放大的问题就完全解决了
+  - **可靠性**: 多存几份
+  - 本质: `int next[]`
+    - `next[i] == 0`: Free (本块未分配)
+    - `next[i] == -1`: EOF (本块是文件的最后一个块)
+- **目录文件**
+  - 在 metadata 里标记一下 (mode = directory), 操作系统就把数据理解成 `struct dirent[]`
+  - DOS: "8+3" 文件名: ![](../0_Attachment/Pasted%20image%2020250517230741.png)
+  - 文件名不够用怎么办: 打补丁, ![](../0_Attachment/Pasted%20image%2020250517230905.png)
+
+观察 FAT 文件系统
+
+- 快速格式化 = 清空 FAT 表, 所有的文件内容 (包括目录文件) 都还在, 只是在数据结构眼里看起来都是 "free block"
+- 可以猜出文件系统的参数 (SecPerClus, BytsPerSec, ...), 从而恢复 next 关系
+
+FAT: 性能与可靠性
+
+- 性能
+  - 适合小文件, 但不适合大文件的随机访问, 例如4 GB 的文件跳到末尾 (4 KB cluster) 有 $2^{20}$ 次 next 操作
+  - 在 FAT 时代, 磁盘连续访问性能更佳
+- 可靠性: 维护若干个 FAT 的副本防止元数据损坏 (轻微写放大)
+
+### UNIX 文件系统
+
+性能优化前需要统计一下数据, 而不是无脑优化.
+
+UNIX 系列文件系统的改进
+
+- **支持 (硬) 链接**
+  - 树 -> 图
+  - 允许一个 "虚拟磁盘" 存在多份引用: 意味着 struct node (数据), struct edge (目录中的文件) 要分开
+- **支持任意大小文件的随机访问**
+
+**iNode** (index node)
+
+- 保存 ls -l 里的各种 metadata (mode, links, user/group, access/modify/change time)
+- 以及一个用于索引的数据结构: `map<int, int>`, 即file offset → block id
+
+**ext2**: 另一个数据结构
+
+- ![](../0_Attachment/Pasted%20image%2020250517231927.png)
+- Superblock: 文件系统级的元数据 (iNode 数量, block_per_block (以第一个 superblock 为准))
+- 联合数据结构, 用于处理 fast/slow path: ![](../0_Attachment/Pasted%20image%2020250517232003.png)
+- ext2 目录文件: `map<string, int>`, 即 name → iNode, ![](../0_Attachment/Pasted%20image%2020250517232105.png)
+
+ext2: 性能与可靠性
+
+- 局部性与缓存
+  - bitmap, inode 都有 “集中存储” 的局部性
+  - 通过内存缓存减少读/写放大
+- 大文件 $O(1)$ 随机读写
+  - 支持链接 (一定程度减少空间浪费)
+  - iNode 在磁盘上连续存储, 便于缓存/预取
+  - 依然有碎片的问题
+- 但可靠性依然是个很大的问题
+  - 存储 iNode 的数据块损坏是很严重的
+
+### 现代文件系统
+
+数据结构可以不用实现在内核: FUSE, Filesystem in Userspace
+
+- FUSE Kernel Module: 负责实现协议 (/dev/fuse)
+
+- libfuse: 用来实现文件系统
+
+  ```c
+  struct fuse_operations null_oper = {
+      .getattr    = null_getattr,
+      .truncate   = null_truncate,
+      .open       = null_open,
+      .read       = null_read,
+      .write      = null_write,
+  };
+  ```
+
+可以使用任意数据结构来实现: 如 B-Tree Filesystem (btrfs)
+
+## 24 持久数据的可靠性
+
+> 存储系统支撑了当今的互联网工业--每个 SSD 都是 "套娃" 的计算机系统; 它们又组成了大规模存储网络, 再经过操作系统的 write-ahead logging, 缓存等复杂的机制, 最终为应用程序提供了一套简洁的文件系统 API, 支撑了我们今天看到的数字世界。纵观历史发展, 理解其中的来龙去脉并不难, 也许读到这里你也跃跃欲试, 这就是计算机系统让我们感到激动人心的原因.
+
+### 实现可靠的磁盘
+
+RAID: 存储设备的虚拟化
+
+- Redundant Array of Inexpensive (*Independent*) Disks (RAID)
+- 把多个 (不可靠的) 磁盘虚拟成一块非常可靠且性能极高的虚拟磁盘
+- 是"反向的", 类比进程/虚存/文件把"一个设备"虚拟成多份
+
+RAID 虚拟化 = 虚拟块号到 (磁盘, 块号) 的映射
+
+- RAID-0: 更大的容量, 更快的读写速度
+- RAID-1: 镜像, 读速度翻倍, 写速度保持一致
+  - 有点浪费, 可以只使用1-bit的冗余恢复出一个丢失的bit: 奇偶校验码, 不过需要**知道**哪一个bit丢失才能恢复
+- RAID-5: 使 Parity 均匀分布在各个磁盘: ![](../0_Attachment/Pasted%20image%2020250526171808.png)
+- *具体参考: [冗余磁盘阵列](<../NJU24F_COA/3_存储器分层体系结构.md###冗余磁盘阵列>)*
+
+RAID: 自身可靠性
+
+- 磁盘 Fail-stop
+  - 软件可以感知
+  - 自动启用备盘并复制数据, 期间性能下降
+- 物理磁盘不能完美同步
+  - 断电导致的数据不一致
+
+数据中心存储 = 一个分布式的 RAID
+
+### 崩溃一致性
+
+文件系统面对的难题: crash
+
+- 内存清空
+
+对存储设备的系统调用涉及 multiple writes
+
+- 分配数据块: bwrite(d-bitmap)
+- 写入数据块: bwrite(data)
+- 更新 size, time, index, ...: bwrite(inode)
+
+而存储器上的迷你计算机系统会把写请求先放在**缓存**, 再规划写入**存储器**
+
+- 导致了写操作是乱序执行的, 磁盘掉电时, 写入请求的顺序是没有任何保证的
+- 存储设备本身不提供原子 multi-write, 可以使用 model checker 模拟崩溃时的文件系统行为
+
+### FSCK 和 Journaling
+
+File System Checking (FSCK)
+
+- 根据磁盘上已有的 G(V, E), 恢复出 "最可能" 的数据结构
+
+磁盘提供的接口
+
+- `bwrite`
+  - 收到立即返回, 异步写入 (eventually persistent)
+- `bread`
+  - 如果在缓存里, 立即返回数据
+  - 如果不在缓存中, 调度实际读操作, 数据到达后再返回
+- `bflush`
+  - 等待所有已写入的数据**落盘**
+  - 现代存储系统可以提供更细粒度的 flush
+    - SCSI: Synchronize Cache
+    - SSD: 固件控制
+
+理解数据结构
+
+- 视角1: 存储实际**数据结构** (链表, 二叉树, ……), 文件系统的"直观"表示, 涉及 mutli-write (即 crash unsafe 的来源)
+- 视角2: append-only 记录所有的**历史操作**
+  - 重做所有操作得到数据结构的当前状态
+  - 容易实现**崩溃一致性**
+
+用 Atomic Append 实现 Atomic Perform: 先 记录事件到 **journal** 再写文件
+
+1. bread 定位到 journal 的末尾
+2. bwrite TXBegin ; operations
+3. bflush 等待数据落盘
+4. bwrite TXEnd (Commit; 实现 Atomic Append)
+5. bflush 等待数据落盘
+6. replay(operations) -- 所以也叫 "redo log"
+7. replay 数据落盘后可以删除 (标记) 日志
+
+## 持久化: 总结
+
+### 文件系统 API
+
+- 文件 (数据 & 元数据) 管理
+  - open, read, write, close, stat, chmod, chown, fsetxattr/fgetxattr, ftruncate, ...
+- 目录树管理
+  - mount, mkdir, readdir, link, symlink, unlink, rename, chdir, ...
+- 一致性管理
+  - sync > syncfs > fsync > fdatasync
+- 其他相关的操作系统 API
+  - flock, mmap, ...
+
+## 25 应用数据的存储
+
+> 在操作系统为我们提供的文件, 目录, 网络 API 上, 开发者可以自由地创建更多, 更复杂, 更可靠的系统. 我们看到了关系数据库的兴起, 看到了云计算时代下 NoSQL 的繁荣, 和今天的 AI 时代--在这几波浪潮之间, 虽然操作系统内核的实现发生了巨大的变化, 但操作系统的 API 相当惊人地稳定, 这种 “稳定性” 支撑了应用生态的繁荣, 这也是操作系统作为 “平台” 的使命.
+
+### 关系代数, SQL 和数据库
+
+背景: 软件天生有 persist data 的需求 (需要**保存**应用数据)
+
+- 个人信息 (学籍……)
+- 订单
+- 日志 (支付记录, 维护记录……)
+
+方法1: 在文件 (虚拟磁盘) 上构建**数据结构**
+
+- 就像 ELF, BMP, ...
+
+  ```c
+  // example: 教务系统
+  // 应用系统实现将 expel(s); enroll(s, c); ...翻译成 read, write, lseek 系统调用
+  struct superblock {
+      struct student *s;
+      struct course *c; 
+  }
+  struct student { char stuid[16]; ...  };
+  struct course  { char cid[16]; ...  }
+  
+  ```
+
+方法2: 利用目录树
+
+- 可以使用 UNIX 的工具如 find, grep, ...
+
+- 关联学生的选课, 成绩: copy / symlink
+
+- 实现并发访问和 crash consistency: 有点难
+
+  ```markdown
+  ehall.nju.edu.cn/teacherJxrwApp/22020230/4
+  ├── enrollment
+  │   ├── 231220001.md
+  │   ├── 231220002.md
+  │   └── ...
+  ├── syllabus
+  │   ├── 1-intro.md
+  │   ├── 2-app-view.md
+  │   └── ...
+  └── textbook
+      └── 1-ostep.md
+  ```
+
+实际需求
+
+- Concurrency (Parallelism)
+  - 全校一起选课, 系统不能崩 (为了**并行性**, 不能一把大锁保平安)
+- Persistence (Crash Consistent)
+  - 系统故障, 数据不能丢
+- Atomicity
+  - all or nothing
+
+Relational Database (关系型数据库)
+
+- Everything is a table. 每行一个对象, 对象可以用 id 索引其他对象.
+- ACID 数据库
+- 支持任意长 (允许混合任意计算) 的 Transaction
+- 拥有海量的实现优化
+
+### 关系数据库: 实现
+
+实现查询 = 实现编译优化 (语义等价的 rewriting)
+
+- 参考 CMU15-445
+
+### 不用关系的数据库
+
+"国民级规模的" SQL
+
+- 实现正确, 但数据库**引擎压力**较大
+- 数据库提供的功能被滥用
+
+解决: 做**减法**, 更少的能力, 更好的性能, 更高的扩展性
+
+- Key/Value
+  - 简单, 高效 (缓存, 计数器, 队列)
+  - *给 key 做个 hash, 配置到分布式系统*
+- Document (JSON/XML/...)
+  - NoSQL 实现 "国民级" 应用的主力
+- Graph
+- Column
+- Vector
+
+## 26 计算机系统安全
+
+> 在计算机系统设计的初期, 真的没有安全可言--但随着需求的增长, 今天我们已经有非常成熟的安全机制, 从软件到硬件层层保障系统的安全; 而用出其不意的方法攻破这些系统也成为了非常有趣的挑战.
+
+### 计算机系统安全
+
+PC "裸奔" 时代, 完全没有任何安全可言
+
+- 任何程序都可以访问**任何硬件**
+
+安全的标准
+
+- Confidentiality: 不想给别人看的, 别人就看不到
+- Integrity: 不想让别人改的, 别人就改不了
+- Availability: 属于我的, 别人不能让我用不了
+  - Fork Bomb, Algorithmic complexity attack, Distributed DoS (DDoS)
+
+问题: 如何在操作系统提供的**功能**之上实现这三点
+
+### 访问控制
+
+访问控制: **限制程序对操作系统对象的访问**
+
+- 进程只能以 ELF 规定的权限访问自己的虚拟地址空间, 系统调用是**唯一**访问操作系统对象的途径
+- 拒绝越权访问 → Confidentiality
+- 拒绝越权修改 → Integrity
+- 再加上公平资源调度 → Availability
+
+原理: 访问控制表
+
+- 给每个操作系统对象指定对应 **uid** 的权限
+- 操作系统完全看不到用户名, 通过 setuid, setgid, chmod 系统调用实现访问控制
+
+其他方法
+
+- Access Control List (ACL)
+- SELinux/AppArmor
+- Capabilities
+
+### 系统攻防
+
+攻破一个进程
+
+- 缓冲区溢出攻击
+- ROP
+
+防御一个进程
+
+- www-root, ASLR: mmap 映射到随机的地址, Canary (stack protector), NX-bit (no execute), CFI (endbr64), ...
+
+"单次"看似合法的访问也可能存在非法行为
+
+- 软件上: 利用页面置换的时间消耗特性
+- 硬件上: 利用分支预测和 cache 的 footprint
+
+## 27 现代应用程序架构
+
+> 透过虚拟化发展的历史浪潮, 从虚拟机到容器, 再到 Serverless, 我们看到 "计算机系统" 作为支撑性技术给应用世界带来的变革. 有些时候, 革命性的技术建立在极简的动机上, 例如 full system emulator 真的可以运行得很快, 或是给每个操作系统对象加一个 osid, 世界就会就此改变.
+
+### 虚拟机和容器
+
+Full System Emulation 性能问题的解决: Guest Ring 3 **直接运行**在 Host Ring 3, 取代了类似 NEMU 的 "模拟执行"
+
+- System call 会 trap 到 VMM
+- 硬件支持: Xen and the art of virtualization
+- 应用: ISP 提供的是**物理机**, 虚拟化能将一台虚拟机当 n 台来卖
+- 优点: 更容易管理**状态**
+
+Linux Namespace
+
+- 操作系统自己虚拟化自己: 只向应用程序暴露系统调用 API (虚拟的 pstree)
+- pid 可以不再是整个操作系统唯一, 给每个进程增加一个 **osid**, 准备好一个 "虚拟操作系统" 所需的对象即可
+
+cgroups
+
+- 划分不同进程 (组) 的资源使用策略
+
+容器
+
+- namespaces 和 cgroups 共同使用
+
+云时代的虚拟机
+
+- 只需要 Linux 的情况下, 容器和虚拟机完全一样, 开销比虚拟机低很多, 安全性略低 (节约部署成本)
+- Kubernetes: 跨主机, 弹性自动编排, 自动容错
+
+### 云原生与微服务
+
+微服务
+
+- 把程序拆成 Microservices
+- Cloud Native: 云会负责容器管理, API Gateway, 负载均衡……
+
+Function-as-a-Service (FaaS)
+
+CI (Continuous Integration), CD (Continuous Delivery)
